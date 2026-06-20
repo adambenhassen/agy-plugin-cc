@@ -1,12 +1,21 @@
 import fs from "node:fs";
 
-import { getSessionRuntimeStatus } from "./codex.mjs";
 import { getConfig, listJobs, readJobFile, resolveJobFile } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 
 export const DEFAULT_MAX_STATUS_JOBS = 8;
 export const DEFAULT_MAX_PROGRESS_LINES = 4;
+
+// Agy runs one prompt per invocation; there is no shared long-lived runtime.
+export function getSessionRuntimeStatus() {
+  return {
+    mode: "direct",
+    label: "direct startup",
+    detail: "Each Agy command runs a fresh `agy --print` invocation.",
+    endpoint: null
+  };
+}
 
 export function sortJobsNewestFirst(jobs) {
   return [...jobs].sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));

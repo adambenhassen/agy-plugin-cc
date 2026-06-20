@@ -285,33 +285,6 @@ export function renderReviewResult(parsedResult, meta) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export function renderNativeReviewResult(result, meta) {
-  const stdout = result.stdout.trim();
-  const stderr = result.stderr.trim();
-  const lines = [
-    `# Codex ${meta.reviewLabel}`,
-    "",
-    `Target: ${meta.targetLabel}`,
-    ""
-  ];
-
-  if (stdout) {
-    lines.push(stdout);
-  } else if (result.status === 0) {
-    lines.push("Codex review completed without any stdout output.");
-  } else {
-    lines.push("Codex review failed.");
-  }
-
-  if (stderr) {
-    lines.push("", "stderr:", "", "```text", stderr, "```");
-  }
-
-  appendReasoningSection(lines, meta.reasoningSummary);
-
-  return `${lines.join("\n").trimEnd()}\n`;
-}
-
 export function renderTaskResult(parsedResult, meta) {
   const rawOutput = typeof parsedResult?.rawOutput === "string" ? parsedResult.rawOutput : "";
   if (rawOutput) {

@@ -14,16 +14,6 @@ import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
 
 const DEFAULT_CONTINUE_PROMPT = "Continue from where the previous task left off.";
-
-// Agy runs one prompt at a time; there is no shared long-lived runtime to report.
-function getSessionRuntimeStatus() {
-  return {
-    mode: "direct",
-    label: "direct startup",
-    detail: "Each Agy command runs a fresh `agy --print` invocation.",
-    endpoint: null
-  };
-}
 import {
   generateJobId,
   getConfig,
@@ -35,6 +25,7 @@ import {
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
+  getSessionRuntimeStatus,
   readStoredJob,
   resolveCancelableJob,
   resolveResultJob,
