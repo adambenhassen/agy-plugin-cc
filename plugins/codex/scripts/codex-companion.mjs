@@ -7,23 +7,23 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { parseArgs, splitRawArgumentString } from "./lib/args.mjs";
-import {
-    buildPersistentTaskThreadName,
-    DEFAULT_CONTINUE_PROMPT,
-    findLatestTaskThread,
-    getCodexAuthStatus,
-    getCodexAvailability,
-    getSessionRuntimeStatus,
-    interruptAppServerTurn,
-    parseStructuredOutput,
-    readOutputSchema,
-    runAppServerReview,
-    runAppServerTurn
-  } from "./lib/codex.mjs";
-import { readStdinIfPiped } from "./lib/fs.mjs";
+import { getAgyAvailability, runAgyPrint } from "./lib/agy.mjs";
+import { composeReviewPrompt, parseAgyReview } from "./lib/agy-review.mjs";
+import { readJsonFile, readStdinIfPiped } from "./lib/fs.mjs";
 import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
-import { loadPromptTemplate, interpolateTemplate } from "./lib/prompts.mjs";
+
+const DEFAULT_CONTINUE_PROMPT = "Continue from where the previous task left off.";
+
+// Agy runs one prompt at a time; there is no shared long-lived runtime to report.
+function getSessionRuntimeStatus() {
+  return {
+    mode: "direct",
+    label: "direct startup",
+    detail: "Each Agy command runs a fresh `agy --print` invocation.",
+    endpoint: null
+  };
+}
 import {
   generateJobId,
   getConfig,
@@ -52,7 +52,6 @@ import {
 } from "./lib/tracked-jobs.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 import {
-  renderNativeReviewResult,
   renderReviewResult,
   renderStoredJobResult,
   renderCancelReport,
@@ -180,29 +179,24 @@ async function buildSetupReport(cwd, actionsTaken = []) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
   const nodeStatus = binaryAvailable("node", ["--version"], { cwd });
   const npmStatus = binaryAvailable("npm", ["--version"], { cwd });
-  const codexStatus = getCodexAvailability(cwd);
-  const authStatus = await getCodexAuthStatus(cwd);
+  const agyStatus = getAgyAvailability(cwd);
   const config = getConfig(workspaceRoot);
 
   const nextSteps = [];
-  if (!codexStatus.available) {
-    nextSteps.push("Install Codex with `npm install -g @openai/codex`.");
-  }
-  if (codexStatus.available && !authStatus.loggedIn && authStatus.requiresOpenaiAuth) {
-    nextSteps.push("Run `!codex login`.");
-    nextSteps.push("If browser login is blocked, retry with `!codex login --device-auth` or `!codex login --with-api-key`.");
+  if (!agyStatus.available) {
+    nextSteps.push("Install the `agy` CLI and make sure it is on your PATH, then rerun `/agy:setup`.");
   }
   if (!config.stopReviewGate) {
-    nextSteps.push("Optional: run `/codex:setup --enable-review-gate` to require a fresh review before stop.");
+    nextSteps.push("Optional: run `/agy:setup --enable-review-gate` to require a fresh review before stop.");
   }
 
   return {
-    ready: nodeStatus.available && codexStatus.available && authStatus.loggedIn,
+    ready: nodeStatus.available && agyStatus.available,
     node: nodeStatus,
     npm: npmStatus,
-    codex: codexStatus,
-    auth: authStatus,
-    sessionRuntime: getSessionRuntimeStatus(process.env, workspaceRoot),
+    codex: agyStatus,
+    auth: { available: agyStatus.available, loggedIn: agyStatus.available, requiresOpenaiAuth: false, detail: agyStatus.available ? "agy CLI ready" : "agy CLI not found" },
+    sessionRuntime: getSessionRuntimeStatus(),
     reviewGateEnabled: Boolean(config.stopReviewGate),
     actionsTaken,
     nextSteps
@@ -235,49 +229,11 @@ async function handleSetup(argv) {
   outputResult(options.json ? finalReport : renderSetupReport(finalReport), options.json);
 }
 
-function buildAdversarialReviewPrompt(context, focusText) {
-  const template = loadPromptTemplate(ROOT_DIR, "adversarial-review");
-  return interpolateTemplate(template, {
-    REVIEW_KIND: "Adversarial Review",
-    TARGET_LABEL: context.target.label,
-    USER_FOCUS: focusText || "No extra focus provided.",
-    REVIEW_COLLECTION_GUIDANCE: context.collectionGuidance,
-    REVIEW_INPUT: context.content
-  });
-}
-
-function ensureCodexAvailable(cwd) {
-  const availability = getCodexAvailability(cwd);
+function ensureAgyAvailable(cwd) {
+  const availability = getAgyAvailability(cwd);
   if (!availability.available) {
-    throw new Error("Codex CLI is not installed or is missing required runtime support. Install it with `npm install -g @openai/codex`, then rerun `/codex:setup`.");
+    throw new Error("The `agy` CLI is not installed or is not on your PATH. Install it, then rerun `/agy:setup`.");
   }
-}
-
-function buildNativeReviewTarget(target) {
-  if (target.mode === "working-tree") {
-    return { type: "uncommittedChanges" };
-  }
-
-  if (target.mode === "branch") {
-    return { type: "baseBranch", branch: target.baseRef };
-  }
-
-  return null;
-}
-
-function validateNativeReviewRequest(target, focusText) {
-  if (focusText.trim()) {
-    throw new Error(
-      `\`/codex:review\` now maps directly to the built-in reviewer and does not support custom focus text. Retry with \`/codex:adversarial-review ${focusText.trim()}\` for focused review instructions.`
-    );
-  }
-
-  const nativeTarget = buildNativeReviewTarget(target);
-  if (!nativeTarget) {
-    throw new Error("This `/codex:review` target is not supported by the built-in reviewer. Retry with `/codex:adversarial-review` for custom targeting.");
-  }
-
-  return nativeTarget;
 }
 
 function renderStatusPayload(report, asJson) {
@@ -305,7 +261,6 @@ function findLatestResumableTaskJob(jobs) {
     jobs.find(
       (job) =>
         job.jobClass === "task" &&
-        job.threadId &&
         job.status !== "queued" &&
         job.status !== "running"
     ) ?? null
@@ -332,7 +287,6 @@ async function waitForSingleJobSnapshot(cwd, reference, options = {}) {
 
 async function resolveLatestTrackedTaskThread(cwd, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
-  const sessionId = getCurrentClaudeSessionId();
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot)).filter((job) => job.id !== options.excludeJobId);
   const visibleJobs = filterJobsForCurrentClaudeSession(jobs);
   const activeTask = visibleJobs.find((job) => job.jobClass === "task" && (job.status === "queued" || job.status === "running"));
@@ -342,18 +296,14 @@ async function resolveLatestTrackedTaskThread(cwd, options = {}) {
 
   const trackedTask = findLatestResumableTaskJob(visibleJobs);
   if (trackedTask) {
-    return { id: trackedTask.threadId };
+    return { id: trackedTask.id };
   }
 
-  if (sessionId) {
-    return null;
-  }
-
-  return findLatestTaskThread(workspaceRoot);
+  return null;
 }
 
 async function executeReviewRun(request) {
-  ensureCodexAvailable(request.cwd);
+  ensureAgyAvailable(request.cwd);
   ensureGitRepository(request.cwd);
 
   const target = resolveReviewTarget(request.cwd, {
@@ -362,92 +312,50 @@ async function executeReviewRun(request) {
   });
   const focusText = request.focusText?.trim() ?? "";
   const reviewName = request.reviewName ?? "Review";
-  if (reviewName === "Review") {
-    const reviewTarget = validateNativeReviewRequest(target, focusText);
-    const result = await runAppServerReview(request.cwd, {
-      target: reviewTarget,
-      model: request.model,
-      onProgress: request.onProgress
-    });
-    const payload = {
-      review: reviewName,
-      target,
-      threadId: result.threadId,
-      sourceThreadId: result.sourceThreadId,
-      codex: {
-        status: result.status,
-        stderr: result.stderr,
-        stdout: result.reviewText,
-        reasoning: result.reasoningSummary
-      }
-    };
-    const rendered = renderNativeReviewResult(
-      {
-        status: result.status,
-        stdout: result.reviewText,
-        stderr: result.stderr
-      },
-      { reviewLabel: reviewName, targetLabel: target.label, reasoningSummary: result.reasoningSummary }
-    );
-
-    return {
-      exitStatus: result.status,
-      threadId: result.threadId,
-      turnId: result.turnId,
-      payload,
-      rendered,
-      summary: firstMeaningfulLine(result.reviewText, `${reviewName} completed.`),
-      jobTitle: `Codex ${reviewName}`,
-      jobClass: "review",
-      targetLabel: target.label
-    };
-  }
+  const adversarial = reviewName !== "Review";
 
   const context = collectReviewContext(request.cwd, target);
-  const prompt = buildAdversarialReviewPrompt(context, focusText);
-  const result = await runAppServerTurn(context.repoRoot, {
+  const prompt = composeReviewPrompt(context, {
+    adversarial,
+    focusText,
+    schema: readJsonFile(REVIEW_SCHEMA)
+  });
+  const result = await runAgyPrint({
+    cwd: context.repoRoot,
     prompt,
     model: request.model,
-    sandbox: "read-only",
-    outputSchema: readOutputSchema(REVIEW_SCHEMA),
-    onProgress: request.onProgress
+    onLog: request.onProgress ? (chunk) => request.onProgress(chunk) : null
   });
-  const parsed = parseStructuredOutput(result.finalMessage, {
-    status: result.status,
-    failureMessage: result.error?.message ?? result.stderr
-  });
+  const parsed = parseAgyReview(result.text);
   const payload = {
     review: reviewName,
     target,
-    threadId: result.threadId,
+    threadId: null,
     context: {
       repoRoot: context.repoRoot,
       branch: context.branch,
       summary: context.summary
     },
-    codex: {
-      status: result.status,
+    agy: {
+      status: result.exitCode,
       stderr: result.stderr,
-      stdout: result.finalMessage,
-      reasoning: result.reasoningSummary
+      stdout: result.text
     },
     result: parsed.parsed,
     rawOutput: parsed.rawOutput,
-    parseError: parsed.parseError,
-    reasoningSummary: result.reasoningSummary
+    parseError: parsed.parseError
   };
 
   return {
-    exitStatus: result.status,
-    threadId: result.threadId,
-    turnId: result.turnId,
+    exitStatus: result.exitCode,
+    threadId: null,
+    turnId: null,
     payload,
     rendered: renderReviewResult(parsed, {
       reviewLabel: reviewName,
-      targetLabel: context.target.label,
-      reasoningSummary: result.reasoningSummary
+      targetLabel: context.target.label
     }),
-    summary: parsed.parsed?.summary ?? parsed.parseError ?? firstMeaningfulLine(result.finalMessage, `${reviewName} finished.`),
+    summary: parsed.parsed?.summary ?? parsed.parseError ?? firstMeaningfulLine(result.text, `${reviewName} finished.`),
     jobTitle: `Codex ${reviewName}`,
     jobClass: "review",
     targetLabel: context.target.label
@@ -457,48 +365,39 @@ async function executeReviewRun(request) {
 
 async function executeTaskRun(request) {
   const workspaceRoot = resolveWorkspaceRoot(request.cwd);
-  ensureCodexAvailable(request.cwd);
+  ensureAgyAvailable(request.cwd);
 
   const taskMetadata = buildTaskRunMetadata({
     prompt: request.prompt,
     resumeLast: request.resumeLast
   });
 
-  let resumeThreadId = null;
   if (request.resumeLast) {
-    const latestThread = await resolveLatestTrackedTaskThread(workspaceRoot, {
+    const latest = await resolveLatestTrackedTaskThread(workspaceRoot, {
       excludeJobId: request.jobId
     });
-    if (!latestThread) {
-      throw new Error("No previous Codex task thread was found for this repository.");
+    if (!latest) {
+      throw new Error("No previous Agy task was found for this repository to resume.");
     }
-    resumeThreadId = latestThread.id;
   }
 
-  if (!request.prompt && !resumeThreadId) {
+  if (!request.prompt && !request.resumeLast) {
     throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
   }
 
-  const result = await runAppServerTurn(workspaceRoot, {
-    resumeThreadId,
-    prompt: request.prompt,
-    defaultPrompt: resumeThreadId ? DEFAULT_CONTINUE_PROMPT : "",
+  const prompt = request.prompt || (request.resumeLast ? DEFAULT_CONTINUE_PROMPT : "");
+  const result = await runAgyPrint({
+    cwd: workspaceRoot,
+    prompt,
     model: request.model,
-    effort: request.effort,
-    sandbox: request.write ? "workspace-write" : "read-only",
-    onProgress: request.onProgress,
-    persistThread: true,
-    threadName: resumeThreadId ? null : buildPersistentTaskThreadName(request.prompt || DEFAULT_CONTINUE_PROMPT)
+    resume: Boolean(request.resumeLast),
+    onLog: request.onProgress ? (chunk) => request.onProgress(chunk) : null
   });
 
-  const rawOutput = typeof result.finalMessage === "string" ? result.finalMessage : "";
-  const failureMessage = result.error?.message ?? result.stderr ?? "";
+  const rawOutput = result.text;
+  const failureMessage = result.exitCode === 0 ? "" : result.stderr || `agy exited with code ${result.exitCode}`;
   const rendered = renderTaskResult(
-    {
-      rawOutput,
-      failureMessage,
-      reasoningSummary: result.reasoningSummary
-    },
+    { rawOutput, failureMessage },
     {
       title: taskMetadata.title,
       jobId: request.jobId ?? null,
@@ -506,17 +405,16 @@ async function executeTaskRun(request) {
     }
   );
   const payload = {
-    status: result.status,
-    threadId: result.threadId,
+    status: result.exitCode,
+    threadId: null,
     rawOutput,
-    touchedFiles: result.touchedFiles,
-    reasoningSummary: result.reasoningSummary
+    touchedFiles: []
   };
 
   return {
-    exitStatus: result.status,
-    threadId: result.threadId,
-    turnId: result.turnId,
+    exitStatus: result.exitCode,
+    threadId: null,
+    turnId: null,
     payload,
     rendered,
     summary: firstMeaningfulLine(rawOutput, firstMeaningfulLine(failureMessage, `${taskMetadata.title} finished.`)),
@@ -724,8 +622,7 @@ async function handleReviewCommand(argv, config) {
 
 async function handleReview(argv) {
   return handleReviewCommand(argv, {
-    reviewName: "Review",
-    validateRequest: validateNativeReviewRequest
+    reviewName: "Review"
   });
 }
 
@@ -756,7 +653,7 @@ async function handleTask(argv) {
   });
 
   if (options.background) {
-    ensureCodexAvailable(cwd);
+    ensureAgyAvailable(cwd);
     requireTaskRequest(prompt, resumeLast);
 
     const job = buildTaskJob(workspaceRoot, taskMetadata, write);
@@ -927,18 +824,6 @@ async function handleCancel(argv) {
   const reference = positionals[0] ?? "";
   const { workspaceRoot, job } = resolveCancelableJob(cwd, reference, { env: process.env });
   const existing = readStoredJob(workspaceRoot, job.id) ?? {};
-  const threadId = existing.threadId ?? job.threadId ?? null;
-  const turnId = existing.turnId ?? job.turnId ?? null;
-
-  const interrupt = await interruptAppServerTurn(cwd, { threadId, turnId });
-  if (interrupt.attempted) {
-    appendLogLine(
-      job.logFile,
-      interrupt.interrupted
-        ? `Requested Codex turn interrupt for ${turnId} on ${threadId}.`
-        : `Codex turn interrupt failed${interrupt.detail ? `: ${interrupt.detail}` : "."}`
-    );
-  }
 
   terminateProcessTree(job.pid ?? Number.NaN);
   appendLogLine(job.logFile, "Cancelled by user.");
@@ -970,9 +855,7 @@ async function handleCancel(argv) {
   const payload = {
     jobId: job.id,
     status: "cancelled",
-    title: job.title,
-    turnInterruptAttempted: interrupt.attempted,
-    turnInterrupted: interrupt.interrupted
+    title: job.title
   };
 
   outputCommandResult(payload, renderCancelReport(nextJob), options.json);
