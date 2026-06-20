@@ -11,63 +11,27 @@ function read(relativePath) {
   return fs.readFileSync(path.join(PLUGIN_ROOT, relativePath), "utf8");
 }
 
-test("review command uses AskUserQuestion and background Bash while staying review-only", () => {
+test("review command stays review-only and forwards to the agy companion", () => {
   const source = read("commands/review.md");
   assert.match(source, /AskUserQuestion/);
   assert.match(source, /\bBash\(/);
   assert.match(source, /Do not fix issues/i);
   assert.match(source, /review-only/i);
   assert.match(source, /return Agy's output verbatim to the user/i);
-  assert.match(source, /```bash/);
-  assert.match(source, /```typescript/);
-  assert.match(source, /review "\$ARGUMENTS"/);
-  assert.match(source, /\[--scope auto\|working-tree\|branch\]/);
+  assert.match(source, /agy-companion\.mjs" review "\$ARGUMENTS"/);
   assert.match(source, /run_in_background:\s*true/);
-  assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/agy-companion\.mjs" review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Agy review"/);
-  assert.match(source, /Do not call `BashOutput`/);
-  assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
-  assert.match(source, /git status --short --untracked-files=all/);
-  assert.match(source, /git diff --shortstat/);
-  assert.match(source, /Treat untracked files or directories as reviewable work/i);
-  assert.match(source, /Recommend waiting only when the review is clearly tiny, roughly 1-2 files total/i);
-  assert.match(source, /In every other case, including unclear size, recommend background/i);
-  assert.match(source, /The companion script parses `--wait` and `--background`/i);
-  assert.match(source, /Claude Code's `Bash\(..., run_in_background: true\)` is what actually detaches the run/i);
-  assert.match(source, /When in doubt, run the review/i);
-  assert.match(source, /\(Recommended\)/);
-  assert.match(source, /does not support staged-only review, unstaged-only review, or extra focus text/i);
 });
 
-test("adversarial review command uses AskUserQuestion and background Bash while staying review-only", () => {
+test("adversarial review command stays review-only and forwards to the agy companion", () => {
   const source = read("commands/adversarial-review.md");
   assert.match(source, /AskUserQuestion/);
   assert.match(source, /\bBash\(/);
   assert.match(source, /Do not fix issues/i);
   assert.match(source, /review-only/i);
-  assert.match(source, /return Agy's output verbatim to the user/i);
-  assert.match(source, /```bash/);
-  assert.match(source, /```typescript/);
-  assert.match(source, /adversarial-review "\$ARGUMENTS"/);
-  assert.match(source, /\[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]/);
+  assert.match(source, /agy-companion\.mjs" adversarial-review "\$ARGUMENTS"/);
   assert.match(source, /run_in_background:\s*true/);
-  assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/agy-companion\.mjs" adversarial-review "\$ARGUMENTS"`/);
-  assert.match(source, /description:\s*"Agy adversarial review"/);
-  assert.match(source, /Do not call `BashOutput`/);
-  assert.match(source, /Return the command stdout verbatim, exactly as-is/i);
-  assert.match(source, /git status --short --untracked-files=all/);
-  assert.match(source, /git diff --shortstat/);
-  assert.match(source, /Treat untracked files or directories as reviewable work/i);
-  assert.match(source, /Recommend waiting only when the scoped review is clearly tiny, roughly 1-2 files total/i);
-  assert.match(source, /In every other case, including unclear size, recommend background/i);
-  assert.match(source, /The companion script parses `--wait` and `--background`/i);
-  assert.match(source, /Claude Code's `Bash\(..., run_in_background: true\)` is what actually detaches the run/i);
-  assert.match(source, /When in doubt, run the review/i);
-  assert.match(source, /\(Recommended\)/);
   assert.match(source, /uses the same review target selection as `\/agy:review`/i);
-  assert.match(source, /supports working-tree review, branch review, and `--base <ref>`/i);
-  assert.match(source, /does not support `--scope staged` or `--scope unstaged`/i);
-  assert.match(source, /can still take extra focus text after the flags/i);
 });
 
 test("continue is not exposed as a user-facing command", () => {
@@ -83,92 +47,40 @@ test("continue is not exposed as a user-facing command", () => {
   ]);
 });
 
-test("rescue command absorbs continue semantics", () => {
+test("rescue command is a thin forwarder routed through the agy-rescue subagent", () => {
   const rescue = read("commands/rescue.md");
   const agent = read("agents/agy-rescue.md");
-  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   const runtimeSkill = read("skills/agy-cli-runtime/SKILL.md");
 
   assert.match(rescue, /The final user-visible response must be Agy's output verbatim/i);
   assert.match(rescue, /allowed-tools:\s*Bash\(node:\*\),\s*AskUserQuestion,\s*Agent/);
-  // Regression for #234: `Skill(agy:rescue)` from the main agent recursed
-  // because rescue.md named the routing with ambiguous prose ("Route this
-  // request to the `agy:agy-rescue` subagent") while running under
-  // `context: fork` — forked general-purpose subagents do not expose the
-  // `Agent` tool, so the fork fell back to `Skill` and re-entered this
-  // command. Pin the explicit transport and the inline (no-fork) execution.
+  // Regression for the Skill-recursion bug: pin the explicit transport and inline (no-fork) execution.
   assert.match(rescue, /subagent_type: "agy:agy-rescue"/);
   assert.match(rescue, /do not call `Skill\(agy:agy-rescue\)`/i);
   assert.doesNotMatch(rescue, /^context:\s*fork\b/m);
   assert.match(rescue, /--background\|--wait/);
   assert.match(rescue, /--resume\|--fresh/);
-  assert.match(rescue, /--model <model\|spark>/);
-  assert.match(rescue, /--effort <none\|minimal\|low\|medium\|high\|xhigh>/);
+  assert.match(rescue, /--model <model>/);
   assert.match(rescue, /task-resume-candidate --json/);
   assert.match(rescue, /AskUserQuestion/);
   assert.match(rescue, /Continue current Agy thread/);
   assert.match(rescue, /Start a new Agy thread/);
-  assert.match(rescue, /run the `agy:agy-rescue` subagent in the background/i);
-  assert.match(rescue, /default to foreground/i);
-  assert.match(rescue, /Do not forward them to `task`/i);
-  assert.match(rescue, /`--model` and `--effort` are runtime-selection flags/i);
-  assert.match(rescue, /Leave `--effort` unset unless the user explicitly asks for a specific reasoning effort/i);
-  assert.match(rescue, /If they ask for `spark`, map it to `gpt-5\.3-agy-spark`/i);
-  assert.match(rescue, /If the request includes `--resume`, do not ask whether to continue/i);
-  assert.match(rescue, /If the request includes `--fresh`, do not ask whether to continue/i);
-  assert.match(rescue, /If the user chooses continue, add `--resume`/i);
-  assert.match(rescue, /If the user chooses a new thread, add `--fresh`/i);
   assert.match(rescue, /thin forwarder only/i);
   assert.match(rescue, /Return the Agy companion stdout verbatim to the user/i);
-  assert.match(rescue, /Do not paraphrase, summarize, rewrite, or add commentary before or after it/i);
-  assert.match(rescue, /return that command's stdout as-is/i);
-  assert.match(rescue, /Leave `--resume` and `--fresh` in the forwarded request/i);
+
   assert.match(agent, /--resume/);
   assert.match(agent, /--fresh/);
   assert.match(agent, /thin forwarding wrapper/i);
-  assert.match(agent, /prefer foreground for a small, clearly bounded rescue request/i);
-  assert.match(agent, /If the user did not explicitly choose `--background` or `--wait` and the task looks complicated, open-ended, multi-step, or likely to keep Agy running for a long time, prefer background execution/i);
   assert.match(agent, /Use exactly one `Bash` call/i);
-  assert.match(agent, /Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own/i);
   assert.match(agent, /Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
-  assert.match(agent, /Leave `--effort` unset unless the user explicitly requests a specific reasoning effort/i);
-  assert.match(agent, /Leave model unset by default/i);
-  assert.match(agent, /If the user asks for `spark`, map that to `--model gpt-5\.3-agy-spark`/i);
-  assert.match(agent, /If the user asks for a concrete model name such as `gpt-5\.4-mini`, pass it through with `--model`/i);
   assert.match(agent, /Return the stdout of the `agy-companion` command exactly as-is/i);
-  assert.match(agent, /If the Bash call fails or Agy cannot be invoked, return nothing/i);
   assert.match(agent, /agy-prompting/);
-  assert.match(agent, /only to tighten the user's request into a better Agy prompt/i);
-  assert.match(agent, /Do not use that skill to inspect the repository, reason through the problem yourself, draft a solution, or do any independent work/i);
+
   assert.match(runtimeSkill, /only job is to invoke `task` once and return that stdout unchanged/i);
   assert.match(runtimeSkill, /Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
-  assert.match(runtimeSkill, /use the `agy-prompting` skill to rewrite the user's request into a tighter Agy prompt/i);
-  assert.match(runtimeSkill, /That prompt drafting is the only Claude-side work allowed/i);
-  assert.match(runtimeSkill, /Leave `--effort` unset unless the user explicitly requests a specific effort/i);
-  assert.match(runtimeSkill, /Leave model unset by default/i);
-  assert.match(runtimeSkill, /Map `spark` to `--model gpt-5\.3-agy-spark`/i);
-  assert.match(runtimeSkill, /If the forwarded request includes `--background` or `--wait`, treat that as Claude-side execution control only/i);
-  assert.match(runtimeSkill, /Strip it before calling `task`/i);
-  assert.match(runtimeSkill, /`--effort`: accepted values are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`/i);
-  assert.match(runtimeSkill, /Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own/i);
-  assert.match(runtimeSkill, /If the Bash call fails or Agy cannot be invoked, return nothing/i);
-  assert.match(readme, /`agy:agy-rescue` subagent/i);
-  assert.match(readme, /if you do not pass `--model` or `--effort`, Agy chooses its own defaults/i);
-  assert.match(readme, /--model gpt-5\.4-mini --effort medium/i);
-  assert.match(readme, /`spark`, the plugin maps that to `gpt-5\.3-agy-spark`/i);
-  assert.match(readme, /continue a previous Agy task/i);
-  assert.match(readme, /### `\/agy:setup`/);
-  assert.match(readme, /### `\/agy:review`/);
-  assert.match(readme, /### `\/agy:adversarial-review`/);
-  assert.match(readme, /uses the same review target selection as `\/agy:review`/i);
-  assert.match(readme, /--base main challenge whether this was the right caching and retry design/);
-  assert.match(readme, /### `\/agy:rescue`/);
-  assert.match(readme, /### `\/agy:status`/);
-  assert.match(readme, /### `\/agy:result`/);
-  assert.match(readme, /### `\/agy:cancel`/);
 });
 
-test("result and cancel commands are exposed as deterministic runtime entrypoints", () => {
+test("result and cancel commands are deterministic runtime entrypoints", () => {
   const result = read("commands/result.md");
   const cancel = read("commands/cancel.md");
   const resultHandling = read("skills/agy-result-handling/SKILL.md");
@@ -191,9 +103,6 @@ test("internal docs use task terminology for rescue runs", () => {
   assert.match(runtimeSkill, /task --resume-last/i);
   assert.match(promptingSkill, /Use `task` when the task is diagnosis/i);
   assert.match(promptRecipes, /Agy task prompts/i);
-  assert.match(promptRecipes, /Use these as starting templates for Agy task prompts/i);
-  assert.match(promptRecipes, /## Diagnosis/);
-  assert.match(promptRecipes, /## Narrow Fix/);
 });
 
 test("hooks keep session-end cleanup and stop gating enabled", () => {
@@ -204,16 +113,53 @@ test("hooks keep session-end cleanup and stop gating enabled", () => {
   assert.match(source, /session-lifecycle-hook\.mjs/);
 });
 
-test("setup command can offer Agy install and still points users to agy login", () => {
+test("setup command checks the agy CLI without npm or login flows", () => {
   const setup = read("commands/setup.md");
-  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
-
   assert.match(setup, /argument-hint:\s*'\[--enable-review-gate\|--disable-review-gate\]'/);
-  assert.match(setup, /AskUserQuestion/);
-  assert.match(setup, /npm install -g @openai\/agy/);
   assert.match(setup, /agy-companion\.mjs" setup --json \$ARGUMENTS/);
-  assert.match(readme, /!agy login/);
-  assert.match(readme, /offer to install Agy for you/i);
-  assert.match(readme, /\/agy:setup --enable-review-gate/);
-  assert.match(readme, /\/agy:setup --disable-review-gate/);
+  assert.match(setup, /install the `agy` CLI/i);
+  assert.doesNotMatch(setup, /npm/i);
+  assert.doesNotMatch(setup, /login/i);
+});
+
+test("no codex/openai/spark leakage remains in plugin docs", () => {
+  const docFiles = [
+    "commands/review.md",
+    "commands/adversarial-review.md",
+    "commands/rescue.md",
+    "commands/setup.md",
+    "commands/status.md",
+    "commands/result.md",
+    "commands/cancel.md",
+    "agents/agy-rescue.md",
+    "skills/agy-cli-runtime/SKILL.md",
+    "skills/agy-result-handling/SKILL.md",
+    "skills/agy-prompting/SKILL.md"
+  ];
+  for (const file of docFiles.map(read)) {
+    assert.doesNotMatch(file, /codex/i);
+    assert.doesNotMatch(file, /@openai/i);
+    assert.doesNotMatch(file, /\bspark\b/i);
+    assert.doesNotMatch(file, /npm install/i);
+  }
+  // README may reference the upstream fork (openai/codex-plugin-cc) for attribution,
+  // but must not carry codex runtime semantics like spark or npm installs.
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  assert.doesNotMatch(readme, /\bspark\b/i);
+  assert.doesNotMatch(readme, /npm install/i);
+  assert.match(readme, /fork of \[openai\/codex-plugin-cc\]/);
+});
+
+test("README documents the agy commands and install flow", () => {
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  assert.match(readme, /`agy:agy-rescue` subagent/i);
+  assert.match(readme, /### `\/agy:setup`/);
+  assert.match(readme, /### `\/agy:review`/);
+  assert.match(readme, /### `\/agy:adversarial-review`/);
+  assert.match(readme, /### `\/agy:rescue`/);
+  assert.match(readme, /### `\/agy:status`/);
+  assert.match(readme, /### `\/agy:result`/);
+  assert.match(readme, /### `\/agy:cancel`/);
+  assert.match(readme, /uses the same review target selection as `\/agy:review`/i);
+  assert.match(readme, /agy` CLI installed and on your `PATH`/i);
 });

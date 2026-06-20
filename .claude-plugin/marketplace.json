@@ -1,19 +1,19 @@
 {
-  "name": "openai-codex",
+  "name": "agy",
   "owner": {
-    "name": "OpenAI"
+    "name": "adambenhassen"
   },
   "metadata": {
-    "description": "Codex plugins to use in Claude Code for delegation and code review.",
+    "description": "Agy plugin for Claude Code: delegate work and run code reviews with the agy CLI.",
     "version": "1.0.4"
   },
   "plugins": [
     {
-      "name": "codex",
-      "description": "Use Codex from Claude Code to review code or delegate tasks.",
+      "name": "agy",
+      "description": "Use the agy CLI from Claude Code to review code or delegate tasks.",
       "version": "1.0.4",
       "author": {
-        "name": "OpenAI"
+        "name": "adambenhassen"
       },
       "source": "./plugins/agy"
     }

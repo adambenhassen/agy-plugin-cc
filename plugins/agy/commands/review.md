@@ -1,11 +1,11 @@
 ---
-description: Run a Codex code review against local git state
+description: Run a Agy code review against local git state
 argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---
 
-Run a Codex review through the shared built-in reviewer.
+Run a Agy review through the shared built-in reviewer.
 
 Raw slash-command arguments:
 `$ARGUMENTS`
@@ -13,7 +13,7 @@ Raw slash-command arguments:
 Core constraint:
 - This command is review-only.
 - Do not fix issues, apply patches, or suggest that you are about to make changes.
-- Your only job is to run the review and return Codex's output verbatim to the user.
+- Your only job is to run the review and return Agy's output verbatim to the user.
 
 Execution mode rules:
 - If the raw arguments include `--wait`, do not ask. Run the review in the foreground.
@@ -53,9 +53,9 @@ Background flow:
 ```typescript
 Bash({
   command: `node "${CLAUDE_PLUGIN_ROOT}/scripts/agy-companion.mjs" review "$ARGUMENTS"`,
-  description: "Codex review",
+  description: "Agy review",
   run_in_background: true
 })
 ```
 - Do not call `BashOutput` or wait for completion in this turn.
-- After launching the command, tell the user: "Codex review started in the background. Check `/agy:status` for progress."
+- After launching the command, tell the user: "Agy review started in the background. Check `/agy:status` for progress."

@@ -1,6 +1,6 @@
-# Codex Prompt Anti-Patterns
+# Agy Prompt Anti-Patterns
 
-Avoid these when prompting Codex or GPT-5.4.
+Avoid these when prompting Agy.
 
 ## Vague task framing
 
