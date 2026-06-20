@@ -1,4 +1,4 @@
-# Agy plugin for Claude Code
+# Antigravity plugin for Claude Code
 
 Use Agy from inside Claude Code for code reviews or to delegate tasks to Agy.
 

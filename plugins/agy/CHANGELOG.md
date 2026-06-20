@@ -9,4 +9,4 @@
 
 ## 1.0.0
 
-- Initial version of the Agy plugin for Claude Code
+- Initial version of the Antigravity plugin for Claude Code

@@ -4,7 +4,7 @@
     "name": "adambenhassen"
   },
   "metadata": {
-    "description": "Agy plugin for Claude Code: delegate work and run code reviews with the agy CLI.",
+    "description": "Antigravity plugin for Claude Code: delegate work and run code reviews with the agy CLI.",
     "version": "1.0.4"
   },
   "plugins": [
