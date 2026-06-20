@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { installFakeAgy, buildAgyEnv } from "./fake-agy-fixture.mjs";
-import { buildAgyArgs, runAgyPrint, getAgyAvailability } from "../plugins/codex/scripts/lib/agy.mjs";
+import { buildAgyArgs, runAgyPrint, getAgyAvailability } from "../plugins/agy/scripts/lib/agy.mjs";
 
 async function withFakeAgy(behavior, fn) {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "agy-bin-"));

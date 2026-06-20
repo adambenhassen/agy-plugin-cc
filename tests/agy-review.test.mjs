@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseAgyReview, extractJsonObject, composeReviewPrompt } from "../plugins/codex/scripts/lib/agy-review.mjs";
+import { parseAgyReview, extractJsonObject, composeReviewPrompt } from "../plugins/agy/scripts/lib/agy-review.mjs";
 
 const CLEAN = JSON.stringify({ verdict: "approve", summary: "ok", findings: [], next_steps: [] });
 

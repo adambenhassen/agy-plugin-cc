@@ -12,9 +12,9 @@ const COMPANION = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "plugins",
-  "codex",
+  "agy",
   "scripts",
-  "codex-companion.mjs"
+  "agy-companion.mjs"
 );
 
 function setup(behavior = "text-ok") {
@@ -45,7 +45,7 @@ test("setup reports ready when the agy CLI is available", () => {
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(result.stdout);
     assert.equal(report.ready, true);
-    assert.equal(report.codex.available, true);
+    assert.equal(report.agy.available, true);
   } finally {
     cleanup(ctx);
   }

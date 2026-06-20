@@ -1,5 +1,5 @@
 {
-  "name": "@openai/codex-plugin-cc",
+  "name": "@openai/agy-plugin-cc",
   "version": "1.0.4",
   "private": true,
   "type": "module",
